@@ -56,7 +56,7 @@ Indoor and face inpainting require strong geometric continuity under large masks
 ## Inpainting animation (Indoor)
 
 <p align="center">
-  <img src="./docs/images/indoor_inpaint_demo.gif" width="480" alt="ConDiF indoor inpainting demo"/>
+  <img src="docs/images/indoor_inpaint_demo.gif" alt="ConDiF indoor inpainting demo"/>
 </p>
 <p align="center"><em>Figure 3. Indoor inpainting — masked input to ConDiF output.</em></p>
 
@@ -117,28 +117,6 @@ ckpt/
 ├── Realistic_Vision_V6.0_B1_noVAE/   # Hugging Face SD base
 └── condif/                           # ConDiF branch (config.json + weights)
 ```
-
-**Checkpoint metadata:** if your download still uses legacy class names in `config.json`, run:
-
-```bash
-python scripts/migrate_condif_config.py ckpt/condif
-```
-
-Example `config.json` after migration:
-
-```json
-{
-  "_class_name": "CondifModel",
-  "_name_or_path": "condif_indoor_256/checkpoint-50000",
-  "condif_conditioning_channel_order": "rgb",
-  "conditioning_channels": 8,
-  "cross_attention_dim": 768,
-  "in_channels": 4,
-  "mid_block_type": "UNetMidBlock2DCrossAttn"
-}
-```
-
-Legacy tensor keys are remapped automatically at load time; you do not need to rename weight files.
 
 ---
 
