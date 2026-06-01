@@ -1,7 +1,7 @@
 # ConDiF: Confidence-guided Direction Fields for Structure-aware Diffusion Inpainting
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
+[![Python 3.8](https://img.shields.io/badge/python-3.8-blue.svg)](https://www.python.org/downloads/release/python-380/)
+[![PyTorch 1.12.1](https://img.shields.io/badge/PyTorch-1.12.1+cu116-ee4c2c.svg)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
 Official implementation of **ConDiF** — a confidence-guided direction field framework for structure-aware diffusion inpainting on **indoor scenes** and **face images**.
@@ -56,16 +56,54 @@ Indoor and face inpainting require strong geometric continuity under large masks
 
 ---
 
+## Inpainting animation (Indoor)
+
+将 GIF 放在 `docs/images/` 下，用相对路径嵌入即可（GitHub 会自动播放）：
+
+```markdown
+![ConDiF indoor inpainting demo](docs/images/indoor_inpaint_demo.gif)
+```
+
+当前仓库中的演示：
+
+<p align="center">
+  <img src="docs/images/indoor_inpaint_demo.gif" width="70%" alt="ConDiF indoor inpainting: masked input to restored output"/>
+</p>
+<p align="center">
+  <em>Figure 3. Indoor scene inpainting — masked input → ConDiF output.</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/indoor_damaged.png" width="32%" alt="Masked input"/>
+  &nbsp;
+  <img src="docs/images/indoor_restored.png" width="32%" alt="ConDiF output"/>
+</p>
+<p align="center"><em>Left: masked input · Right: ConDiF inpainting result</em></p>
+
+**替换为你自己的 GIF：** 把文件复制为 `docs/images/indoor_inpaint_demo.gif`（或修改上方 `src=` 路径），然后 `git add docs/images/indoor_inpaint_demo.gif` 一并提交。
+
+可选：用脚本从两张 PNG 生成循环 GIF（需 Node.js）：
+
+```bash
+node scripts/make_inpaint_gif.cjs docs/images/indoor_damaged.png docs/images/indoor_restored.png docs/images/indoor_inpaint_demo.gif
+```
+
+---
+
 ## Repository structure
 
 ```
 Condif2/
 ├── README.md
+├── requirements.txt
 ├── docs/
 │   ├── paper.pdf
 │   └── images/
 │       ├── overview.png
-│       └── celeba_results.png
+│       ├── celeba_results.png
+│       ├── indoor_damaged.png
+│       ├── indoor_restored.png
+│       └── indoor_inpaint_demo.gif
 ├── demo/                          # sample images, masks, precomputed priors
 ├── src/diffusers/                 # ConDiF model & inference pipeline
 │   ├── models/condif.py
@@ -73,27 +111,37 @@ Condif2/
 ├── examples/condif/
 │   └── train_condif_indoor.py     # training entry
 └── scripts/
-    └── check_condif_imports.py
+    ├── check_condif_imports.py
+    └── make_inpaint_gif.cjs         # build before/after demo GIF (needs Node.js)
 ```
 
 ---
 
 ## Installation
 
+Tested with **Python 3.8**, **PyTorch 1.12.1 (CUDA 11.6)**, and the pinned packages in [`requirements.txt`](requirements.txt).
+
+> 本项目使用仓库内 `src/diffusers/`，**不要** `pip install diffusers` 覆盖本地 ConDiF 代码。
+
 ```bash
 git clone https://github.com/<your-username>/Condif2.git
 cd Condif2
 
-conda create -n condif python=3.10 -y
+conda create -n condif python=3.8 -y
 conda activate condif
 
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-pip install diffusers transformers accelerate safetensors opencv-python pillow \
-            numpy tqdm scipy webdataset imgaug torchmetrics datasets huggingface_hub
-# optional: xformers, wandb, bitsandbytes
+# 1) PyTorch 1.12.1 + CUDA 11.6（须先于 requirements.txt 安装）
+pip install torch==1.12.1+cu116 torchvision==0.13.1+cu116 torchaudio==0.12.1+cu116 \
+  --index-url https://download.pytorch.org/whl/cu116
+
+# 2) 其余依赖（见 requirements.txt）
+pip install -r requirements.txt
+
+# 3) 训练脚本额外依赖
+pip install imgaug webdataset
 ```
 
-Use the **local** ConDiF package (do not rely on pip `diffusers` alone):
+Use the **local** ConDiF package:
 
 ```bash
 export PYTHONPATH="$(pwd)/src:${PYTHONPATH}"
@@ -101,6 +149,49 @@ python scripts/check_condif_imports.py
 ```
 
 Expected output: `OK: top-level import`.
+
+Windows (PowerShell):
+
+```powershell
+$env:PYTHONPATH = "$(Get-Location)\src;$env:PYTHONPATH"
+python scripts/check_condif_imports.py
+```
+
+<details>
+<summary>Full dependency list (<code>requirements.txt</code>)</summary>
+
+```
+accelerate==1.0.1
+albumentations==1.4.18
+clip==0.2.0
+controlnet-aux==0.0.10
+datasets==3.1.0
+einops==0.8.1
+huggingface-hub==0.36.2
+imageio==2.35.1
+kornia==0.7.3
+lpips==0.1.4
+matplotlib==3.4.3
+numpy==1.24.3
+opencv-python==4.11.0.86
+pandas==2.0.3
+Pillow==9.5.0
+pytorch-fid==0.3.0
+safetensors==0.5.3
+scikit-image==0.21.0
+scipy==1.10.1
+tensorboard==2.13.0
+timm==0.6.13
+torch==1.12.1+cu116
+torchaudio==0.12.1+cu116
+torchmetrics==1.2.1
+torchvision==0.13.1+cu116
+tqdm==4.67.1
+transformers==4.46.3
+triton==3.0.0
+```
+
+</details>
 
 ---
 
