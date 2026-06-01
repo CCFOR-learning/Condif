@@ -29,6 +29,31 @@ Official implementation of **ConDiF** — a confidence-guided direction field fr
 
 ---
 
+## Datasets
+
+We follow the **Indoor** benchmark and mask protocol from [ZITS (CVPR 2022)](https://github.com/DQiaole/ZITS_inpainting), and the **CelebA-HQ** data and mask protocol from [LaMa (WACV 2022)](https://github.com/advimman/lama).
+
+### Indoor scenes (ZITS)
+
+| Item | Source |
+|------|--------|
+| **Indoor images** | [ZITS README — Indoor dataset (Google Drive)](https://drive.google.com/file/d/1ugVvsEifcNjR5cb6w4rSaHk5YcpEICvG/view?usp=sharing) · [Baidu Drive](https://pan.baidu.com/s/11O1Q7gcn7dhjPDDUNrmodQ) (password: `hfok`) |
+| **Train / val splits** | `indoor_train_list.txt`, `indoor_val_list.txt` in the [ZITS repo](https://github.com/DQiaole/ZITS_inpainting) |
+| **Masks (irregular + segmentation, multiple ratios)** | Same setup as ZITS/MST: [mask archive (Google Drive)](https://drive.google.com/drive/folders/1eU6VaTWGdgCXXWueCXilt6oxHdONgUgf?usp=sharing) — use `irregular_mask_list.txt`, `coco_mask_list.txt`, and `test_mask.zip` as in the [ZITS preparation guide](https://github.com/DQiaole/ZITS_inpainting#preparation) |
+
+Indoor training/evaluation uses **256×256** crops and mask lists referenced by ZITS (`--mask_path`, `--valid_mask_path` in their training scripts). Point `--mask_file_list` in our trainer to a text file listing mask paths in the same style.
+
+### CelebA-HQ faces (LaMa)
+
+| Item | Source |
+|------|--------|
+| **CelebA-HQ images (`data256x256.zip`)** | [LaMa data folder (Google Drive)](https://drive.google.com/drive/folders/11Vz0fqHS2rXDb5pprgTjpD7S2BAJhi1P) — download and run `fetch_data/celebahq_dataset_prepare.sh` per the [LaMa CelebA section](https://github.com/advimman/lama#celeba) |
+| **Masks (Narrow / Medium / Wide)** | Generated with LaMa’s `fetch_data/celebahq_gen_masks.sh` and configs under `configs/data_gen/` — same naming as the paper: **Narrow** = `random_thin_256.yaml`, **Medium** = `random_medium_256.yaml`, **Wide** = `random_thick_256.yaml` ([LaMa mask table](https://github.com/advimman/lama#generate-different-kinds-of-masks)) |
+
+For custom CelebA-HQ splits, you can also use `bin/gen_mask_dataset.py` with the LaMa configs above ([details](https://github.com/advimman/lama#create-your-data)).
+
+---
+
 ## Abstract
 
 Indoor and face inpainting require strong geometric continuity under large masks. **ConDiF** uses a **decoupled dual-branch** design: a frozen Stable Diffusion UNet for generation and a trainable **structure guidance branch** for non-intrusive prior injection. Discrete line sketches are converted into **continuous confidence fields** \(S\) and **tangent direction fields** \((T_x, T_y)\). **FiLM modulation** and **mask gating** apply structure guidance only inside corrupted regions with adaptive strength. Experiments on **Indoor** (ShanghaiTech + NYUDepthV2) and **CelebA-HQ** show improvements over LaMa, ZITS, and related baselines.
@@ -75,6 +100,27 @@ Condif2/
 ├── examples/condif/train_condif_indoor.py
 └── scripts/check_condif_imports.py
 ```
+
+---
+
+## Publishing this repo to GitHub
+
+Do **not** upload `src/` through the GitHub website (drag-and-drop is limited to ~100 files per batch). Use Git from your machine instead.
+
+Only **~90 Python source files** need to be tracked under `src/`. Ignore bytecode caches (`__pycache__/`, `*.pyc`) — they are listed in `.gitignore` and must not be committed.
+
+```bash
+cd Condif2
+git init
+git add .gitignore README.md requirements.txt run_condif_demo.py demo/ docs/ examples/ scripts/ src/
+git status   # should show ~90 .py under src/, not hundreds of .pyc
+git commit -m "Initial ConDiF release"
+git remote add origin https://github.com/<your-username>/Condif2.git
+git branch -M main
+git push -u origin main
+```
+
+If `git status` still lists `*.pyc`, run `git rm -r --cached src/**/__pycache__` before committing.
 
 ---
 
