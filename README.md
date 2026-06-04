@@ -103,27 +103,6 @@ Condif2/
 
 ---
 
-## Publishing this repo to GitHub
-
-Do **not** upload `src/` through the GitHub website (drag-and-drop is limited to ~100 files per batch). Use Git from your machine instead.
-
-Only **~90 Python source files** need to be tracked under `src/`. Ignore bytecode caches (`__pycache__/`, `*.pyc`) — they are listed in `.gitignore` and must not be committed.
-
-```bash
-cd Condif2
-git init
-git add .gitignore README.md requirements.txt run_condif_demo.py demo/ docs/ examples/ scripts/ src/
-git status   # should show ~90 .py under src/, not hundreds of .pyc
-git commit -m "Initial ConDiF release"
-git remote add origin https://github.com/<your-username>/Condif2.git
-git branch -M main
-git push -u origin main
-```
-
-If `git status` still lists `*.pyc`, run `git rm -r --cached src/**/__pycache__` before committing.
-
----
-
 ## Installation
 
 Tested with **Python 3.8**, **PyTorch 1.12.1 (CUDA 11.6)**, and [`requirements.txt`](requirements.txt).
@@ -131,8 +110,8 @@ Tested with **Python 3.8**, **PyTorch 1.12.1 (CUDA 11.6)**, and [`requirements.t
 This repo ships a local fork under `src/diffusers/` — do **not** `pip install diffusers` on top of it.
 
 ```bash
-git clone https://github.com/<your-username>/Condif2.git
-cd Condif2
+git clone https://github.com/CCFOR-learning/Condif.git
+cd Condif
 
 conda create -n condif python=3.8 -y
 conda activate condif
