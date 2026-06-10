@@ -7,8 +7,8 @@
 Official implementation of **ConDiF** — a confidence-guided direction field framework for structure-aware diffusion inpainting on **indoor scenes** and **face images**.
 
 > **Paper:** *ConDiF: Confidence-guided Direction Fields for Structure-aware Diffusion Inpainting*  
-> Chen Cheng, Wenkang Jia\*, Qiufeng Wang, Jieda Wei, Jiannan Chen  
-> \*Corresponding author: jiawenkang@fjnu.edu.cn
+> Chen Cheng, Qu Shuyi, Qiufeng Wang\*, Jieda Wei, Jiannan Chen  
+> \*Corresponding author: Qiufeng Wang
 
 📄 [Paper (PDF)](docs/paper.pdf)
 
@@ -225,7 +225,7 @@ SPPM (§3.2) generates structure priors from corrupted images at test time. Unti
 ```bibtex
 @article{chen2026condif,
   title   = {ConDiF: Confidence-guided Direction Fields for Structure-aware Diffusion Inpainting},
-  author  = {Chen, Cheng and Jia, Wenkang and Wang, Qiufeng and Wei, Jieda and Chen, Jiannan},
+  author  = {Chen, Cheng and Qu, Shuyi and Wang, Qiufeng and Wei, Jieda and Chen, Jiannan},
   journal = {},
   year    = {2026}
 }
