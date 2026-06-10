@@ -1,6 +1,6 @@
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-import cv2  # 新增
+import cv2
 import numpy as np
 import PIL.Image
 import torch
@@ -125,17 +125,14 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 def load_skeleton_npz(npz_path):
-    """
-    从预计算的npz文件加载结构置信度S和切线方向(Tx, Ty)
-    """
+    """Load structure confidence S and tangent directions (Tx, Ty) from a precomputed NPZ file."""
     data = np.load(npz_path)
-    S = data['S'].astype(np.float32)          # [H, W]
+    S = data['S'].astype(np.float32)
     Dx = data['Dx'].astype(np.float32)
     Dy = data['Dy'].astype(np.float32)
-    # 旋转90度得到切线方向（主方向旋转后为切线）
+    # Rotate the normal-direction components by 90 degrees to obtain tangents.
     Tx = -Dy
     Ty = Dx
-    # 归一化
     mag = np.sqrt(Tx**2 + Ty**2)
     mag = np.where(mag < 1e-6, 1.0, mag)
     Tx /= mag
@@ -1136,11 +1133,11 @@ class StableDiffusionCondifPipeline(
             size=(conditioning_latents.shape[-2], conditioning_latents.shape[-1])
         )
 
-        # ---------- 新增：从 skeleton_npz 加载结构先验 ----------
+        # Build 8-channel ConDiF condition: latent(4) | mask M(1) | confidence S(1) | tangent Tx,Ty(2)
         B = conditioning_latents.shape[0]
         device = conditioning_latents.device
         dtype = conditioning_latents.dtype
-        H_img, W_img = image.shape[-2:]   # 假设 image 是预处理后的 tensor [B,3,H,W]
+        H_img, W_img = image.shape[-2:]
 
         if skeleton_npz_paths is not None:
             assert len(skeleton_npz_paths) == B, "skeleton_npz_paths must match batch size"
@@ -1152,31 +1149,26 @@ class StableDiffusionCondifPipeline(
                 S_list.append(S)
                 Tx_list.append(Tx)
                 Ty_list.append(Ty)
-            # 转为 tensor
             S_tensor = torch.from_numpy(np.stack(S_list)[:, None]).to(device, dtype=dtype)
             Tx_tensor = torch.from_numpy(np.stack(Tx_list)[:, None]).to(device, dtype=dtype)
             Ty_tensor = torch.from_numpy(np.stack(Ty_list)[:, None]).to(device, dtype=dtype)
         else:
-            # 如果没有提供，创建零张量（尺寸与输入图像一致）
             S_tensor = torch.zeros(B, 1, H_img, W_img, device=device, dtype=dtype)
             Tx_tensor = torch.zeros(B, 1, H_img, W_img, device=device, dtype=dtype)
             Ty_tensor = torch.zeros(B, 1, H_img, W_img, device=device, dtype=dtype)
 
-        # 下采样到 latent 分辨率
         S_latent = F.interpolate(S_tensor, size=conditioning_latents.shape[-2:], mode='bilinear', align_corners=False)
         Tx_latent = F.interpolate(Tx_tensor, size=conditioning_latents.shape[-2:], mode='bilinear', align_corners=False)
         Ty_latent = F.interpolate(Ty_tensor, size=conditioning_latents.shape[-2:], mode='bilinear', align_corners=False)
 
-        # 合并方向为2通道
-        direction_latent = torch.cat([Tx_latent, Ty_latent], dim=1)   # [B,2,Hl,Wl]
+        direction_latent = torch.cat([Tx_latent, Ty_latent], dim=1)
 
-        # 拼接 8 通道
         conditioning_latents = torch.cat([
-            conditioning_latents,   # 4
-            mask,                   # 1
-            S_latent,               # 1
-            direction_latent        # 2
-        ], dim=1)                   # 8
+            conditioning_latents,
+            mask,
+            S_latent,
+            direction_latent,
+        ], dim=1)
         # 6.5 Optionally get Guidance Scale Embedding
         timestep_cond = None
         if self.unet.config.time_cond_proj_dim is not None:
