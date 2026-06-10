@@ -76,7 +76,9 @@ def zero_module(module):
     return module
 
 
-class FiLMGenerator(nn.Module):
+class FiLMParamNet(nn.Module):
+    """Lightweight conv stack for one FiLM affine map (Paper Eq. 10: E^(l) or F^(l))."""
+
     def __init__(self, cond_channels, out_feat_channels):
         super().__init__()
         mid = max(cond_channels, 32)
@@ -85,14 +87,27 @@ class FiLMGenerator(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(mid, mid, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(mid, out_feat_channels * 2, kernel_size=3, padding=1),
+            nn.Conv2d(mid, out_feat_channels, kernel_size=3, padding=1),
         )
-        # 最后一层用小随机数初始化
         nn.init.normal_(self.net[-1].weight, mean=0.0, std=0.01)
         nn.init.zeros_(self.net[-1].bias)
 
     def forward(self, x):
         return self.net(x)
+
+
+class FiLMGenerator(nn.Module):
+    """Predict channel-wise gamma and beta from downsampled condition C (Paper Eq. 10)."""
+
+    def __init__(self, cond_channels, out_feat_channels):
+        super().__init__()
+        self.gamma_net = FiLMParamNet(cond_channels, out_feat_channels)
+        self.beta_net = FiLMParamNet(cond_channels, out_feat_channels)
+
+    def forward(self, x):
+        gamma = self.gamma_net(x)
+        beta = self.beta_net(x)
+        return torch.cat([gamma, beta], dim=1)
 class CondifModel(ModelMixin, ConfigMixin):
     _supports_gradient_checkpointing = True
 
@@ -159,6 +174,7 @@ class CondifModel(ModelMixin, ConfigMixin):
             transformer_layers_per_block = [transformer_layers_per_block] * len(down_block_types)
 
         self._conditioning_channels = conditioning_channels
+        # 8-channel layout: latent(4) | mask M(1) | confidence S(1) | direction Tx,Ty(2)
         self.cond_mask_channel = 4
         self.cond_S_channel = 5
         self.cond_Tx_channel = 6
@@ -380,30 +396,29 @@ class CondifModel(ModelMixin, ConfigMixin):
             unet.config.addition_time_embed_dim if "addition_time_embed_dim" in unet.config else None
         )
 
-        # ========== 自定义块类型：只保留关键层的交叉注意力 ==========
+        # Sparse cross-attention: text cross-attn only at 32x32 down/up and mid blocks.
         custom_down_block_types = [
             "DownBlock2D",            # 64x64
             "CrossAttnDownBlock2D",   # 32x32
             "DownBlock2D",            # 16x16
             "DownBlock2D",            # 8x8
         ]
-        custom_mid_block_type = "UNetMidBlock2DCrossAttn"   # 中间块 8x8
+        custom_mid_block_type = "UNetMidBlock2DCrossAttn"
         custom_up_block_types = [
             "UpBlock2D",              # 8->16
             "UpBlock2D",              # 16->32
             "CrossAttnUpBlock2D",     # 32->64
             "UpBlock2D",              # 64->128
         ]
-        # =======================================================
 
         condif_model = cls(
             in_channels=unet.config.in_channels,
             conditioning_channels=conditioning_channels,
             flip_sin_to_cos=unet.config.flip_sin_to_cos,
             freq_shift=unet.config.freq_shift,
-            down_block_types=custom_down_block_types,      # 使用自定义列表
-            mid_block_type=custom_mid_block_type,          # 使用自定义中间块
-            up_block_types=custom_up_block_types,          # 使用自定义上采样块
+            down_block_types=custom_down_block_types,
+            mid_block_type=custom_mid_block_type,
+            up_block_types=custom_up_block_types,
             only_cross_attention=unet.config.only_cross_attention,
             block_out_channels=unet.config.block_out_channels,
             layers_per_block=unet.config.layers_per_block,
@@ -523,7 +538,79 @@ class CondifModel(ModelMixin, ConfigMixin):
         remapped = {}
         for key, value in state_dict.items():
             remapped[key.replace("brushnet_", "condif_")] = value
+        remapped = self._migrate_legacy_film_state_dict(remapped)
         return super().load_state_dict(remapped, strict=strict)
+
+    @staticmethod
+    def _migrate_legacy_film_state_dict(state_dict):
+        """Map legacy single-head FiLM checkpoints to separate gamma/beta networks."""
+        import re
+
+        pattern = re.compile(
+            r"^(?P<prefix>.*\.film_generators_(?:down|up)\.\d+|.*\.film_generator_mid)\.net\.(?P<layer>\d+)\.(?P<param>weight|bias)$"
+        )
+        legacy_groups = {}
+        migrated = {}
+
+        for key, value in state_dict.items():
+            match = pattern.match(key)
+            if match is None:
+                migrated[key] = value
+                continue
+            prefix = match.group("prefix")
+            legacy_groups.setdefault(prefix, {})[(match.group("layer"), match.group("param"))] = value
+
+        for prefix, layers in legacy_groups.items():
+            for layer_idx in ("0", "2"):
+                for param in ("weight", "bias"):
+                    tensor = layers.get((layer_idx, param))
+                    if tensor is None:
+                        continue
+                    migrated[f"{prefix}.gamma_net.net.{layer_idx}.{param}"] = tensor
+                    migrated[f"{prefix}.beta_net.net.{layer_idx}.{param}"] = tensor.clone()
+
+            weight = layers.get(("4", "weight"))
+            if weight is not None:
+                split = weight.shape[0] // 2
+                migrated[f"{prefix}.gamma_net.net.4.weight"] = weight[:split].clone()
+                migrated[f"{prefix}.beta_net.net.4.weight"] = weight[split:].clone()
+            bias = layers.get(("4", "bias"))
+            if bias is not None:
+                split = bias.shape[0] // 2
+                migrated[f"{prefix}.gamma_net.net.4.bias"] = bias[:split].clone()
+                migrated[f"{prefix}.beta_net.net.4.bias"] = bias[split:].clone()
+
+        return migrated
+
+    def _downsample_condition(self, cond, target_size):
+        return F.interpolate(cond, size=target_size, mode="bilinear", align_corners=False)
+
+    def _confidence_aware_gate(self, cond_resized, target_size):
+        """Paper Eq. (9): G_l = (downsample M) ⊙ (downsample S), in [0, 1]."""
+        mask = cond_resized[:, self.cond_mask_channel : self.cond_mask_channel + 1]
+        confidence = cond_resized[:, self.cond_S_channel : self.cond_S_channel + 1]
+        gate = mask * confidence
+        if gate.shape[2:] != target_size:
+            gate = F.interpolate(gate, size=target_size, mode="nearest")
+        return gate
+
+    def _apply_gated_film(self, features, cond_resized, gamma, beta):
+        """Paper Eq. (11)-(12): F_mod = (1 + G⊙γ)⊙F + (G⊙β)."""
+        gate = self._confidence_aware_gate(cond_resized, gamma.shape[2:])
+        gamma_tilde = 1.0 + gate * gamma
+        beta_tilde = gate * beta
+        return gamma_tilde * features + beta_tilde
+
+    def _inject_film_modulation(self, block_features, cond, film_gen, zero_conv):
+        """Zero-init conv followed by confidence-aware FiLM on guidance features."""
+        x = zero_conv(block_features)
+        cond_resized = self._downsample_condition(cond, x.shape[2:])
+        gamma, beta = film_gen(cond_resized).chunk(2, dim=1)
+        if cond_resized.shape[1] > self.cond_mask_channel:
+            x = self._apply_gated_film(x, cond_resized, gamma, beta)
+        else:
+            x = (1.0 + gamma) * x + beta
+        return x
 
     def forward(
         self,
@@ -588,11 +675,11 @@ class CondifModel(ModelMixin, ConfigMixin):
                 aug_emb = self.add_embedding(add_embeds)
         emb = emb + aug_emb if aug_emb is not None else emb
 
-        # 输入拼接
+        # Concatenate noisy latent with 8-channel multimodal condition.
         condif_cond_cat = torch.cat([sample, cond], dim=1)
         sample = self.conv_in_condition(condif_cond_cat)
 
-        # 下采样
+        # Down path
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
@@ -606,28 +693,16 @@ class CondifModel(ModelMixin, ConfigMixin):
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
             down_block_res_samples += res_samples
 
-        # FiLM + zero-conv injection (down path)
+        # Zero-conv + gated FiLM injection (down path)
         condif_down_block_res_samples = ()
-        for d_res, condif_block, film_gen in zip(down_block_res_samples, self.condif_down_blocks, self.film_generators_down):
-            x = condif_block(d_res)
-            cond_resized = F.interpolate(cond, size=x.shape[2:], mode='bilinear', align_corners=False)
-            gamma_beta = film_gen(cond_resized)
-            gamma, beta = gamma_beta.chunk(2, dim=1)
+        for d_res, condif_block, film_gen in zip(
+            down_block_res_samples, self.condif_down_blocks, self.film_generators_down
+        ):
+            condif_down_block_res_samples += (
+                self._inject_film_modulation(d_res, cond, film_gen, condif_block),
+            )
 
-            if cond_resized.shape[1] > self.cond_mask_channel:
-                mask = cond_resized[:, self.cond_mask_channel:self.cond_mask_channel+1, :, :]
-                if mask.shape[2:] != gamma.shape[2:]:
-                    mask = F.interpolate(mask, size=gamma.shape[2:], mode='nearest')
-                gamma = 1.0 + mask * gamma
-                beta = mask * beta
-            else:
-                gamma = 1.0 + gamma
-                beta = beta
-
-            x = gamma * x + beta
-            condif_down_block_res_samples += (x,)
-
-        # 中间块
+        # Mid block
         if self.mid_block is not None:
             if hasattr(self.mid_block, "has_cross_attention") and self.mid_block.has_cross_attention:
                 sample = self.mid_block(
@@ -638,21 +713,11 @@ class CondifModel(ModelMixin, ConfigMixin):
             else:
                 sample = self.mid_block(sample, emb)
 
-        # FiLM + 中间块
-        condif_mid = self.condif_mid_block(sample)
-        cond_resized_mid = F.interpolate(cond, size=condif_mid.shape[2:], mode='bilinear', align_corners=False)
-        gamma_beta_mid = self.film_generator_mid(cond_resized_mid)
-        gamma_mid, beta_mid = gamma_beta_mid.chunk(2, dim=1)
-        if cond_resized_mid.shape[1] > self.cond_mask_channel:
-            mask_mid = cond_resized_mid[:, self.cond_mask_channel:self.cond_mask_channel+1, :, :]
-            gamma_mid = 1.0 + mask_mid * gamma_mid
-            beta_mid = mask_mid * beta_mid
-        else:
-            gamma_mid = 1.0 + gamma_mid
-            beta_mid = beta_mid
-        condif_mid = gamma_mid * condif_mid + beta_mid
+        condif_mid = self._inject_film_modulation(
+            sample, cond, self.film_generator_mid, self.condif_mid_block
+        )
 
-        # 上采样
+        # Up path
         up_block_res_samples = ()
         for i, upsample_block in enumerate(self.up_blocks):
             is_final_block = i == len(self.up_blocks) - 1
@@ -681,24 +746,15 @@ class CondifModel(ModelMixin, ConfigMixin):
                 )
             up_block_res_samples += up_res_samples
 
-        # FiLM + zero-conv injection (up path)
         condif_up_block_res_samples = ()
-        for u_res, condif_block, film_gen in zip(up_block_res_samples, self.condif_up_blocks, self.film_generators_up):
-            x = condif_block(u_res)
-            cond_resized = F.interpolate(cond, size=x.shape[2:], mode='bilinear', align_corners=False)
-            gamma_beta = film_gen(cond_resized)
-            gamma, beta = gamma_beta.chunk(2, dim=1)
-            if cond_resized.shape[1] > self.cond_mask_channel:
-                mask = cond_resized[:, self.cond_mask_channel:self.cond_mask_channel+1, :, :]
-                gamma = 1.0 + mask * gamma
-                beta = mask * beta
-            else:
-                gamma = 1.0 + gamma
-                beta = beta
-            x = gamma * x + beta
-            condif_up_block_res_samples += (x,)
+        for u_res, condif_block, film_gen in zip(
+            up_block_res_samples, self.condif_up_blocks, self.film_generators_up
+        ):
+            condif_up_block_res_samples += (
+                self._inject_film_modulation(u_res, cond, film_gen, condif_block),
+            )
 
-        # 缩放
+        # Per-layer guidance scale
         if guess_mode and not self.config.global_pool_conditions:
             total_len = len(condif_down_block_res_samples) + 1 + len(condif_up_block_res_samples)
             scales = torch.logspace(-1, 0, total_len, device=sample.device) * conditioning_scale
